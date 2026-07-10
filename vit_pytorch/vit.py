@@ -247,8 +247,8 @@ def main():
     
 if __name__ == '__main__':
     
-    stem = SimpleStem(in_ch=3, out_ch=32, kernel_size=9, stride=2)
-    xs = torch.randn(1, 3, 42, 42, 42)
+    stem = SimpleStem(in_ch=3, out_ch=32, kernel_size=3, stride=2)
+    xs = torch.randn(1, 3, 32, 32, 32)
     # for 
     ys = stem(xs)
     print(ys.shape)
