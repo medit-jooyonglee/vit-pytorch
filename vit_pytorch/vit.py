@@ -29,11 +29,14 @@ class FeedForward(Module):
     def forward(self, x):
         return self.net(x)
 
-from experiments.relative_position_embedding import Window3DRelativePositionBias
+from experiments.relative_position_embedding import Window3DRelativePositionBias, Window3DRelativeDistanceBias
 class Attention(Module):
     def __init__(self, *, dim, heads = 8, dim_head = 64, dropout = 0., 
                  relative_pos=False,
-                 window_size:List[int] = None, **kwargs):
+                 window_size:List[int] = None, 
+                 relative_embedding_type='window',
+                 pose_op_bias_type='none',
+                 **kwargs):
         super().__init__()
         if dim_head < 0:
             assert dim % heads == 0, 'dimension must be divisible by number of heads'
@@ -57,7 +60,18 @@ class Attention(Module):
             nn.Dropout(dropout)
         ) if project_out else nn.Identity()
         
-        self.relative_pose_embeding = Window3DRelativePositionBias(window_size) if relative_pos else None
+        # if 
+        if relative_pos:
+            if relative_embedding_type == 'window':
+                self.relative_pose_embeding = Window3DRelativePositionBias(window_size) 
+            elif relative_embedding_type == 'distance':
+                self.relative_pose_embeding = Window3DRelativeDistanceBias(window_size)
+            else:
+                raise ValueError(f"Invalid relative_embedding_type: {relative_embedding_type}. Must be 'window' or 'distance'.")
+        else:
+            self.relative_pose_embeding = None
+        # head-wise / batch-wise / none / all
+        self.pose_op_bias_type = pose_op_bias_type # 'head_wise'
         
 
     def forward(self, x, x_scale=None):
@@ -69,7 +83,18 @@ class Attention(Module):
         # qk_dot = 
         dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale
         if self.relative_pose_embeding is not None:
-            dots = dots + self.relative_pose_embeding(x_scale)
+            relative_bias = self.relative_pose_embeding(x_scale)
+            if self.pose_op_bias_type == 'head_wise':
+                relative_bias = relative_bias.expand(1, self.heads, -1, -1)  # [heads, 1, len, len]
+            elif self.pose_op_bias_type == 'batch_wise':
+                relative_bias = relative_bias.expand(x.size(0), 1, -1, -1)  # [batch, 1, len, len]
+            elif self.pose_op_bias_type == 'all':
+                relative_bias = relative_bias.expand(x.size(0), self.heads, -1, -1)  # [batch, heads, len, len]
+            else:
+                pass
+            
+            dots = dots + relative_bias
+
 
         attn = self.attend(dots)
         attn = self.dropout(attn)
