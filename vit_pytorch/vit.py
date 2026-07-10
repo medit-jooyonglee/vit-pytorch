@@ -177,7 +177,47 @@ class ViT(Module):
         return self.mlp_head(x)
 
 
-if __name__ == '__main__':
+
+class ResidualBlock(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.conv = nn.Sequential(
+            nn.Conv3d(in_channels, out_channels, kernel_size=3, padding=1),
+            nn.BatchNorm3d(out_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv3d(out_channels, out_channels, kernel_size=3, padding=1),
+            nn.BatchNorm3d(out_channels),
+            nn.ReLU(inplace=True)
+        )
+        
+    def forward(self, x):
+        return self.conv(x) + x # Residual Connection
+
+class SimpleStem(nn.Module):
+    def __init__(self, *, in_ch=1, out_ch=64, kernel_size=3, stride=2, padding=1, **kwargs):
+        base_ch = out_ch // 2
+        super().__init__()
+        # 48 -> 24 (Stride 2) -> 12 (Stride 2)
+        self.stem = nn.Sequential(
+            nn.Conv3d(in_ch, base_ch, kernel_size=kernel_size, stride=stride, padding=padding),
+            nn.BatchNorm3d(base_ch),
+            nn.ReLU(inplace=True),
+            nn.Conv3d(base_ch, base_ch * 2, kernel_size=kernel_size, stride=stride, padding=padding),
+            nn.BatchNorm3d(base_ch * 2),
+            nn.ReLU(inplace=True)
+        )
+        self.residual_block = ResidualBlock(base_ch * 2, base_ch * 2)
+        
+        # self.pool = lambda x: rearrange(x, 'b c d h w -> b (d h w) c')
+    
+    def forward(self, x):
+        x = self.stem(x)
+        x = self.residual_block(x)
+        # x = self.pool(x)
+        return x
+    
+
+def main():
     
     config = dict(
         dim=256,
@@ -203,3 +243,14 @@ if __name__ == '__main__':
     assert y0.shape == y1.shape == y2.shape 
     y3 = tans0(x0, scale)
     assert y0.shape == y3.shape
+    
+    
+if __name__ == '__main__':
+    
+    stem = SimpleStem(in_ch=3, out_ch=32, kernel_size=9, stride=2)
+    xs = torch.randn(1, 3, 42, 42, 42)
+    # for 
+    ys = stem(xs)
+    print(ys.shape)
+    
+
