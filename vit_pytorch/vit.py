@@ -5,6 +5,8 @@ from torch.nn import Module, ModuleList
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
 
+from typing import List
+
 # helpers
 
 def pair(t):
@@ -27,9 +29,16 @@ class FeedForward(Module):
     def forward(self, x):
         return self.net(x)
 
+from experiments.relative_position_embedding import Window3DRelativePositionBias
 class Attention(Module):
-    def __init__(self, dim, heads = 8, dim_head = 64, dropout = 0.):
+    def __init__(self, *, dim, heads = 8, dim_head = 64, dropout = 0., 
+                 relative_pos=False,
+                 window_size:List[int] = None, **kwargs):
         super().__init__()
+        if dim_head < 0:
+            assert dim % heads == 0, 'dimension must be divisible by number of heads'
+            dim_head = dim // heads
+            
         inner_dim = dim_head *  heads
         project_out = not (heads == 1 and dim_head == dim)
 
@@ -47,14 +56,20 @@ class Attention(Module):
             nn.Linear(inner_dim, dim),
             nn.Dropout(dropout)
         ) if project_out else nn.Identity()
+        
+        self.relative_pose_embeding = Window3DRelativePositionBias(window_size) if relative_pos else None
+        
 
-    def forward(self, x):
+    def forward(self, x, x_scale=None):
         x = self.norm(x)
 
         qkv = self.to_qkv(x).chunk(3, dim = -1)
         q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = self.heads), qkv)
 
+        # qk_dot = 
         dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale
+        if self.relative_pose_embeding is not None:
+            dots = dots + self.relative_pose_embeding(x_scale)
 
         attn = self.attend(dots)
         attn = self.dropout(attn)
@@ -64,44 +79,68 @@ class Attention(Module):
         return self.to_out(out)
 
 class Transformer(Module):
-    def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout = 0.):
+    def __init__(self, *, dim, depth, heads, mlp_dim, dim_head=-1, dropout = 0., 
+                 relative_pos=False,
+                 window_size=None, 
+                 **kwargs):
         super().__init__()
         self.norm = nn.LayerNorm(dim)
         self.layers = ModuleList([])
 
         for _ in range(depth):
             self.layers.append(ModuleList([
-                Attention(dim, heads = heads, dim_head = dim_head, dropout = dropout),
+                Attention(dim=dim, heads = heads, dim_head = dim_head, dropout = dropout, 
+                          relative_pos=relative_pos,  window_size=window_size, **kwargs),
                 FeedForward(dim, mlp_dim, dropout = dropout)
             ]))
 
-    def forward(self, x):
+    def forward(self, x, scale=None):
         for attn, ff in self.layers:
-            x = attn(x) + x
+            x = attn(x, scale) + x
             x = ff(x) + x
 
         return self.norm(x)
 
+
 class ViT(Module):
-    def __init__(self, *, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, pool = 'cls', channels = 3, dim_head = 64, dropout = 0., emb_dropout = 0.):
+    def __init__(self, *, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, pool = 'cls', channels = 3, dim_head = 64, dropout = 0., emb_dropout = 0., ndim = 2, **kwargs):
         super().__init__()
-        image_height, image_width = pair(image_size)
-        self.patch_size = patch_height, patch_width = pair(patch_size)
-
-        assert image_height % patch_height == 0 and image_width % patch_width == 0, 'Image dimensions must be divisible by the patch size.'
-
-        num_patches = (image_height // patch_height) * (image_width // patch_width)
-        patch_dim = channels * patch_height * patch_width
-
+        assert ndim in (2, 3), 'ndim must be 2 or 3'
         assert pool in {'cls', 'mean'}, 'pool type must be either cls (cls token) or mean (mean pooling)'
-        num_cls_tokens = 1 if pool == 'cls' else 0
 
-        self.to_patch_embedding = nn.Sequential(
-            Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = patch_height, p2 = patch_width),
-            nn.LayerNorm(patch_dim),
-            nn.Linear(patch_dim, dim),
-            nn.LayerNorm(dim),
-        )
+        if ndim == 2:
+            image_height, image_width = pair(image_size)
+            self.patch_size = patch_height, patch_width = pair(patch_size)
+
+            assert image_height % patch_height == 0 and image_width % patch_width == 0, 'Image dimensions must be divisible by the patch size.'
+
+            num_patches = (image_height // patch_height) * (image_width // patch_width)
+            patch_dim = channels * patch_height * patch_width
+
+            self.to_patch_embedding = nn.Sequential(
+                Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = patch_height, p2 = patch_width),
+                nn.LayerNorm(patch_dim),
+                nn.Linear(patch_dim, dim),
+                nn.LayerNorm(dim),
+            )
+        else:  # ndim == 3
+            image_d, image_h, image_w = (image_size, image_size, image_size) if isinstance(image_size, int) else image_size
+            patch_d, patch_h, patch_w = (patch_size, patch_size, patch_size) if isinstance(patch_size, int) else patch_size
+            self.patch_size = (patch_d, patch_h, patch_w)
+
+            assert image_d % patch_d == 0 and image_h % patch_h == 0 and image_w % patch_w == 0, 'Image dimensions must be divisible by the patch size.'
+
+            num_patches = (image_d // patch_d) * (image_h // patch_h) * (image_w // patch_w)
+            patch_dim = channels * patch_d * patch_h * patch_w
+
+            self.to_patch_embedding = nn.Sequential(
+                Rearrange('b c (d p0) (h p1) (w p2) -> b (d h w) (p0 p1 p2 c)', p0 = patch_d, p1 = patch_h, p2 = patch_w),
+                nn.LayerNorm(patch_dim),
+                nn.Linear(patch_dim, dim),
+                nn.LayerNorm(dim),
+            )
+
+        num_cls_tokens = 1 if pool == 'cls' else 0
 
         self.cls_token = nn.Parameter(torch.randn(num_cls_tokens, dim))
         self.pos_embedding = nn.Parameter(torch.randn(num_patches + num_cls_tokens, dim))
@@ -136,3 +175,31 @@ class ViT(Module):
 
         x = self.to_latent(x)
         return self.mlp_head(x)
+
+
+if __name__ == '__main__':
+    
+    config = dict(
+        dim=256,
+        depth=2,
+        heads=4,
+        mlp_dim=1024, dropout = 0., 
+                #  relative_pos=False,
+                #  window_size
+    )
+    tans0 = Transformer(**config)
+    x0 = torch.randn(2, 64, 256)
+    y0 = tans0(x0)
+    print(y0.shape)
+    
+    trans1 = Transformer(**{**config, 'relative_pos':True, 'window_size':[4, 4, 4]})
+    # x1 = torch.randn(2, 64, 256)
+    y1 = trans1(x0)
+    print(y1.shape)
+    scale = torch.randn(2)
+    y2 = trans1(x0, scale)
+    
+    print(y1.shape)
+    assert y0.shape == y1.shape == y2.shape 
+    y3 = tans0(x0, scale)
+    assert y0.shape == y3.shape
