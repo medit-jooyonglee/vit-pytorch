@@ -131,12 +131,13 @@ class LeViT3D(nn.Module):
     def __init__(
         self,
         *,
+        in_channels,
         image_size,
         num_classes,
         dim,
         depth,
         heads,
-        mlp_mult,
+        mlp_mult=2,
         stages = 3,
         dim_key = 32,
         dim_value = 64,
@@ -153,7 +154,7 @@ class LeViT3D(nn.Module):
         assert all(map(lambda t: len(t) == stages, (dims, depths, layer_heads))), 'dimensions, depths, and heads must be a tuple that is less than the designated number of stages'
 
         self.conv_embedding = nn.Sequential(
-            nn.Conv3d(3, 32, 3, stride = 2, padding = 1),
+            nn.Conv3d(in_channels, 32, 3, stride = 2, padding = 1),
             nn.Conv3d(32, 64, 3, stride = 2, padding = 1),
             nn.Conv3d(64, 128, 3, stride = 2, padding = 1),
             nn.Conv3d(128, dims[0], 3, stride = 2, padding = 1)

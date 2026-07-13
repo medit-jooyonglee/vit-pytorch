@@ -179,6 +179,7 @@ class TwinsSVT3D(nn.Module):
     def __init__(
         self,
         *,
+        in_channels,
         num_classes,
         s1_emb_dim = 64,
         s1_patch_size = 4,
@@ -207,7 +208,7 @@ class TwinsSVT3D(nn.Module):
         super().__init__()
         kwargs = dict(locals())
 
-        dim = 3
+        dim = in_channels
         layers = []
 
         for prefix in ('s1', 's2', 's3', 's4'):

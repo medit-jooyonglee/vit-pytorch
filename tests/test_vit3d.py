@@ -1,4 +1,4 @@
-from models.etc.vit_pytorch.vit_pytorch import cait_3d, levit_3d, cvt_3d, twins_svt_3d
+from models.etc.vit_pytorch.vit_pytorch import cait_3d, levit_3d, cvt_3d, twins_svt_3d, mobile_vit_3d
 import torch
 import torchinfo
 x0 = torch.randn(5, 3, 48, 48, 48) 
@@ -7,10 +7,11 @@ device = 'cuda'
 
 
 config = dict(
+    in_channels=2,
 image_size = 48,
 patch_size = 8,
 num_classes = 9,
-dim = 256,
+dims = 256,
 depth = 2,
 cls_depth = 2,
 mlp_dim = 1024,
@@ -18,25 +19,43 @@ heads = 6,
 )
 
 
+
+# MobileViT3D's 5 stride-2 downsamples put spatial sizes 6 -> 3 -> 2 in front of the
+# 3 ViT blocks. 48 = 16*3, so one stage always lands on an odd 3 no matter the stride
+# order; the only patch_size dividing 6, 3, and 2 at once is 1, so keep image_size=48
+# by using patch_size=1 (every voxel is its own token / full attention per stage).
+mobile_model = mobile_vit_3d.MobileViT3D(
+    **{**config, 'dims': [64, 128, 256],
+       'image_size': [48, 48, 48],
+       'patch_size': [2, 2, 2],
+       'channels':  [16, 32, 48, 48, 64, 64, 80, 80, 96, 96, 384], 'depths': [2, 4, 3],
+       'mobile_vit_strides': [2, 2, 1],
+       }
+    
+)
+
+torchinfo.summary(mobile_model, input_size=[(2, 2, 48, 48, 48)], device=device)
+
+
 cait3d = cait_3d.CaiT3D(**config)    
 
 
-torchinfo.summary(cait3d, input_size=[(2, 3, 48, 48, 48)], device=device)
+torchinfo.summary(cait3d, input_size=[(2, 2, 48, 48, 48)], device=device)
 
 
 
 levit3d = levit_3d.LeViT3D(
-    **{**config, 'mlp_mult': 4}
+    **{**config}
 )
 
-torchinfo.summary(levit3d, input_size=[(2, 3, 48, 48, 48)], device=device)
+torchinfo.summary(levit3d, input_size=[(2, 2, 48, 48, 48)], device=device)
 
 
 
 cvt3d  = cvt_3d.CvT3D(
-    **{**config, 'mlp_mult': 4}
+    **{**config, 'mlp_mult': 4, 'in_channels': 2}
 )
-torchinfo.summary(cvt3d, input_size=[(2, 3, 48, 48, 48)], device=device)
+torchinfo.summary(cvt3d, input_size=[(2, 2, 48, 48, 48)], device=device)
 
 
 
@@ -63,11 +82,12 @@ torchinfo.summary(cvt3d, input_size=[(2, 3, 48, 48, 48)], device=device)
 # chosen to divide (or fit within) that stage's resulting resolution.
 twinsvt3d = twins_svt_3d.TwinsSVT3D(
     num_classes = config['num_classes'],
+    in_channels=config['in_channels'],
     s1_emb_dim = 64, s1_patch_size = 3, s1_local_patch_size = 4, s1_global_k = 4, s1_depth = 1,
     s2_emb_dim = 128, s2_patch_size = 2, s2_local_patch_size = 4, s2_global_k = 4, s2_depth = 1,
     s3_emb_dim = 128, s3_patch_size = 2, s3_local_patch_size = 2, s3_global_k = 2, s3_depth = 2,
     s4_emb_dim = 256, s4_patch_size = 2, s4_global_k = 2, s4_depth = 2,
 )
 
-torchinfo.summary(twinsvt3d, input_size=[(2, 3, 48, 48, 48)], device=device)
+torchinfo.summary(twinsvt3d, input_size=[(2, 2, 48, 48, 48)], device=device)
 

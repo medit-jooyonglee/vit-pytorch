@@ -177,49 +177,56 @@ class MobileViT3D(nn.Module):
     """
 
     def __init__(
-        self,
+        self, *,
         image_size,
         dims,
+        in_channels,
         channels,
         num_classes,
         expansion=4,
         kernel_size=3,
         patch_size=(2, 2, 2),
-        depths=(2, 4, 3)
+        depths=(2, 4, 3),
+        mobile_vit_strides=(2, 2, 2),
+        
+        **kwargs
     ):
         super().__init__()
+        # dims = dim
         assert len(dims) == 3, 'dims must be a tuple of 3'
         assert len(depths) == 3, 'depths must be a tuple of 3'
-
+        assert len(mobile_vit_strides) == 3, 'mobile_vit_strides must be a tuple of 3'
+        
+        ms0, ms1, ms2 = mobile_vit_strides
         id, ih, iw = image_size
         pd, ph, pw = patch_size
         assert id % pd == 0 and ih % ph == 0 and iw % pw == 0
-
+        # channel
         init_dim, *_, last_dim = channels
 
-        self.conv1 = conv_nxn_bn(3, init_dim, stride=2)
+        self.conv1 = conv_nxn_bn(in_channels, init_dim, stride=2)
 
         self.stem = nn.ModuleList([])
         self.stem.append(MV2Block(channels[0], channels[1], 1, expansion))
-        self.stem.append(MV2Block(channels[1], channels[2], 2, expansion))
+        self.stem.append(MV2Block(channels[1], channels[2], 1, expansion))
         self.stem.append(MV2Block(channels[2], channels[3], 1, expansion))
         self.stem.append(MV2Block(channels[2], channels[3], 1, expansion))
 
         self.trunk = nn.ModuleList([])
         self.trunk.append(nn.ModuleList([
-            MV2Block(channels[3], channels[4], 2, expansion),
+            MV2Block(channels[3], channels[4], ms0, expansion),
             MobileViTBlock(dims[0], depths[0], channels[5],
                            kernel_size, patch_size, int(dims[0] * 2))
         ]))
 
         self.trunk.append(nn.ModuleList([
-            MV2Block(channels[5], channels[6], 2, expansion),
+            MV2Block(channels[5], channels[6], ms1, expansion),
             MobileViTBlock(dims[1], depths[1], channels[7],
                            kernel_size, patch_size, int(dims[1] * 4))
         ]))
 
         self.trunk.append(nn.ModuleList([
-            MV2Block(channels[7], channels[8], 2, expansion),
+            MV2Block(channels[7], channels[8], ms2, expansion),
             MobileViTBlock(dims[2], depths[2], channels[9],
                            kernel_size, patch_size, int(dims[2] * 4))
         ]))
