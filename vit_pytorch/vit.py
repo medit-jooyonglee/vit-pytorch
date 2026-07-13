@@ -10,7 +10,7 @@ from typing import List
 # helpers
 
 def pair(t):
-    return t if isinstance(t, tuple) else (t, t)
+    return t if isinstance(t, (tuple, list)) else (t, t)
 
 # classes
 
@@ -222,12 +222,15 @@ class SimpleStem(nn.Module):
     def __init__(self, *, in_ch=1, out_ch=64, kernel_size=3, stride=2, padding=1, **kwargs):
         base_ch = out_ch // 2
         super().__init__()
+        stride0, stride1 = pair(stride)
+        kernel_size0, kernel_size1 = pair(kernel_size)
+        padding0, padding1 = pair(padding)
         # 48 -> 24 (Stride 2) -> 12 (Stride 2)
         self.stem = nn.Sequential(
-            nn.Conv3d(in_ch, base_ch, kernel_size=kernel_size, stride=stride, padding=padding),
+            nn.Conv3d(in_ch, base_ch, kernel_size=kernel_size0, stride=stride0, padding=padding0),
             nn.BatchNorm3d(base_ch),
             nn.ReLU(inplace=True),
-            nn.Conv3d(base_ch, base_ch * 2, kernel_size=kernel_size, stride=stride, padding=padding),
+            nn.Conv3d(base_ch, base_ch * 2, kernel_size=kernel_size1, stride=stride1, padding=padding1),
             nn.BatchNorm3d(base_ch * 2),
             nn.ReLU(inplace=True)
         )
